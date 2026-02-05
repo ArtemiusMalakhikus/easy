@@ -47,16 +47,23 @@ struct Node
 
 bool work = true;
 
+#if defined LINUX
 void Out(int first)
 {
     if (first == SIGINT)
         work = false;
 }
+#endif
 
 int main()
 {
     std::vector<uint8_t> buffer(4096);
     std::list<Node> nodes;
+
+#if defined LINUX
+    signal(SIGINT, Out);
+    signal(SIGPIPE, SIG_IGN);
+#endif
 
     may::EnableLibrary();
 
@@ -109,8 +116,6 @@ int main()
         return 1;
     }
 
-    signal(SIGINT, Out);
-
     may::SocketAddress temporatyAddress;
     may::TCPSocket temporarySocket;
 
@@ -128,9 +133,9 @@ int main()
             if (temporarySocket.socketID != -1)
             {
                 Node& node = nodes.emplace_back();
+                node.timeout.request = std::chrono::steady_clock::now();
                 node.clientSocket.socketID = temporarySocket.socketID;
                 node.clientSocket.SetNonBlockingMode();
-                node.timeout.request = std::chrono::steady_clock::now();
                 if (node.clientSocket.error != 0)
                 {
                     std::cout << node.clientSocket.errorStr;
@@ -183,7 +188,7 @@ int main()
                         }
                         else
                         {
-                            std::cout << "error: " << node.clientSocket.error
+                            std::cout << "client send error: " << node.clientSocket.error
                                 << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
                                 << ". socket of counter: " << nodes.size() - 1 << std::endl;
                             nodeIter = nodes.erase(nodeIter);
@@ -224,7 +229,7 @@ int main()
                         }
                         else
                         {
-                            std::cout << "error: " << node.hostSocket.error
+                            std::cout << "host send error: " << node.hostSocket.error
                                 << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
                                 << ". socket of counter: " << nodes.size() - 1 << std::endl;
                             nodeIter = nodes.erase(nodeIter);
@@ -441,7 +446,7 @@ int main()
     }
     catch (std::exception& e)
     {
-        std::cout << e.what() << std::endl;
+        std::cerr << e.what() << std::endl;
     }
 
     nodes.clear();
