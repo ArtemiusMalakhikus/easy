@@ -247,11 +247,11 @@ int main()
                     continue;
                 }
 
-                if (requestTime >= disconnectTimeout)
+                /*if (requestTime >= disconnectTimeout)
                 {
                     nodeIter = nodes.erase(nodeIter);
                     continue;
-                }
+                }*/
 
                 if (!node.clientBuffer.empty())
                 {
@@ -266,7 +266,7 @@ int main()
                         }
                         else if (node.clientSocket.error == 0)
                         {
-                            index = node.clientBuffer.size();
+                            index = node.clientSocket.result;
                             size = node.clientBuffer.size() - node.clientSocket.result;
                         }
                         else
@@ -278,8 +278,7 @@ int main()
                             continue;
                         }
 
-                        if (!node.clientBuffer.empty())
-                            memcpy(buffer.data(), node.clientBuffer.data(), node.clientBuffer.size());
+                        memcpy(buffer.data(), node.clientBuffer.data(), node.clientBuffer.size());
 
                         node.clientBuffer.resize(size);
                         memcpy(node.clientBuffer.data(), &buffer[index], node.clientBuffer.size());
@@ -289,7 +288,7 @@ int main()
                         node.clientBuffer.clear();
                     }
 
-                    node.timeout.request = std::chrono::steady_clock::now();
+                    //node.timeout.request = std::chrono::steady_clock::now();
                     ++nodeIter;
                     continue;
                 }
@@ -307,7 +306,7 @@ int main()
                         }
                         else if (node.hostSocket.error == 0)
                         {
-                            index = node.hostBuffer.size();
+                            index = node.hostSocket.result;
                             size = node.hostBuffer.size() - node.hostSocket.result;
                         }
                         else
@@ -319,8 +318,7 @@ int main()
                             continue;
                         }
 
-                        if (!node.hostBuffer.empty())
-                            memcpy(buffer.data(), node.hostBuffer.data(), node.hostBuffer.size());
+                        memcpy(buffer.data(), node.hostBuffer.data(), node.hostBuffer.size());
 
                         node.hostBuffer.resize(size);
                         memcpy(node.hostBuffer.data(), &buffer[index], node.hostBuffer.size());
@@ -351,7 +349,7 @@ int main()
                             }
                             else if (node.hostSocket.error == 0)
                             {
-                                index = node.clientSocket.result;
+                                index = node.hostSocket.result;
                                 size = node.clientSocket.result - node.hostSocket.result;
                             }
                             else
@@ -496,6 +494,39 @@ int main()
                             pos1 += std::string_view{ "Host: " }.size();
                             auto pos2 = bufferStr.find("\r\n", pos1);
                             std::string domianName{ bufferStr.substr(pos1, pos2 - pos1) };
+
+                            auto ipAddress = node.clientAddress.GetIP();
+                            auto iter = allowedIp.find(static_cast<std::string>(ipAddress));
+                            if (iter == allowedIp.end())
+                            {
+                                if (domianName != "mathprofi.ru")
+                                {
+                                    std::cout << "unknown ip address" << std::endl;
+                                    nodeIter = nodes.erase(nodeIter);
+                                    continue;
+                                }
+                                else
+                                {
+                                    allowedIp.emplace(ipAddress);
+
+                                    IPfile.open("ip.txt", std::ios::in | std::ios::out | std::ios::binary);
+                                    IPfile.seekp(0, std::ios::end);
+                                    if (node.clientAddress.address.ss_family == static_cast<uint16_t>(may::AddressFamily::IPV4))
+                                    {
+                                        uint8_t size = 4;
+                                        IPfile.write(reinterpret_cast<const char*>(&size), sizeof(uint8_t));
+                                        IPfile.write(reinterpret_cast<const char*>(ipAddress.data()), size);
+                                    }
+                                    else if (node.clientAddress.address.ss_family == static_cast<uint16_t>(may::AddressFamily::IPV6))
+                                    {
+                                        uint8_t size = 16;
+                                        IPfile.write(reinterpret_cast<const char*>(&size), sizeof(uint8_t));
+                                        IPfile.write(reinterpret_cast<const char*>(ipAddress.data()), size);
+                                    }
+
+                                    IPfile.close();
+                                }
+                            }
                             
                             addrinfo hint{};
                             hint.ai_family = static_cast<int>(may::AddressFamily::IPV4);
@@ -631,7 +662,7 @@ int main()
                             }
                             else if (node.clientSocket.error == 0)
                             {
-                                index = node.hostSocket.result;
+                                index = node.clientSocket.result;
                                 size = node.hostSocket.result - node.clientSocket.result;
                             }
                             else
