@@ -19,6 +19,8 @@
 std::string_view httpsConnectStr{ "CONNECT" };
 std::string_view httpConnectStr{ "GET" };
 std::string_view status200{ "HTTP/1.1 200 OK\r\n\r\n" };
+std::string_view status502{ "HTTP/1.1 502 Bad Gateway\r\n\r\n" };
+//std::string_view status407{ "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"abc\"\r\n\r\n" };
 
 struct Node
 {
@@ -31,7 +33,17 @@ struct Node
         hostSocket.Close();
         if (hostSocket.error != 0)
             std::cout << hostSocket.errorStr;
+
+        auto iter = Node::allowedIP.find(static_cast<std::string>(clientAddress.GetIP()));
+        if (iter != Node::allowedIP.end())
+        {
+            --iter->second;
+            if (iter->second == 0)
+                Node::allowedIP.erase(iter);
+        }
     }
+
+    static inline std::map<std::string, uint32_t> allowedIP;
 
     bool httpConnect{ false };
     bool tcpConnect{ false };
@@ -66,8 +78,6 @@ int main()
     std::vector<uint8_t> buffer(8192);
     std::list<Node> nodes;
 
-    std::set<std::string> allowedIp;
-
 #if defined UNIX
     signal(SIGINT, Out);
     signal(SIGPIPE, SIG_IGN);
@@ -92,7 +102,7 @@ int main()
     file >> disconnectTimeoutStr;
     file.close();
 
-    std::fstream IPfile("ip.txt", std::ios::in | std::ios::binary);
+    /*std::fstream IPfile("ip.txt", std::ios::in | std::ios::binary);
     if (IPfile)
     {
         IPfile.seekg(0, std::ios::end);
@@ -121,7 +131,7 @@ int main()
         IPfile.open("ip.txt", std::ios::out | std::ios::binary);
     }
 
-    IPfile.close();
+    IPfile.close();*/
 
     may::TCPSocket listeningTcpSocket;
     listeningTcpSocket.CreateSocket(may::AddressFamily::IPV4);
@@ -240,18 +250,11 @@ int main()
                     continue;
                 }
 
-                auto requestTime = timePoint - node.timeout.request;
-                if (requestTime < requestTimeout)
+                if (timePoint - node.timeout.request < requestTimeout)
                 {
                     ++nodeIter;
                     continue;
                 }
-
-                /*if (requestTime >= disconnectTimeout)
-                {
-                    nodeIter = nodes.erase(nodeIter);
-                    continue;
-                }*/
 
                 if (!node.clientBuffer.empty())
                 {
@@ -392,8 +395,8 @@ int main()
                             std::cout << "message is not fulled: " << std::endl;
 
                         auto ipAddress = node.clientAddress.GetIP();
-                        auto iter = allowedIp.find(static_cast<std::string>(ipAddress));
-                        if (iter == allowedIp.end())
+                        auto iter = Node::allowedIP.find(static_cast<std::string>(ipAddress));
+                        if (iter == Node::allowedIP.end())
                         {
                             if (domianName != "mathprofi.ru")
                             {
@@ -403,36 +406,13 @@ int main()
                             }
                             else
                             {
-                                allowedIp.emplace(ipAddress);
-
-                                IPfile.open("ip.txt", std::ios::in | std::ios::out | std::ios::binary);
-                                IPfile.seekp(0, std::ios::end);
-                                if (node.clientAddress.address.ss_family == static_cast<uint16_t>(may::AddressFamily::IPV4))
-                                {
-                                    uint8_t size = 4;
-                                    IPfile.write(reinterpret_cast<const char*>(&size), sizeof(uint8_t));
-                                    IPfile.write(reinterpret_cast<const char*>(ipAddress.data()), size);
-                                }
-                                else if (node.clientAddress.address.ss_family == static_cast<uint16_t>(may::AddressFamily::IPV6))
-                                {
-                                    uint8_t size = 16;
-                                    IPfile.write(reinterpret_cast<const char*>(&size), sizeof(uint8_t));
-                                    IPfile.write(reinterpret_cast<const char*>(ipAddress.data()), size);
-                                }
-
-                                IPfile.close();
+                                Node::allowedIP.emplace(ipAddress, 1);
                             }
                         }
-
-                        node.clientSocket.Send(status200.data(), status200.size());
-                        if (node.clientSocket.result != static_cast<int>(status200.size()))
+                        else
                         {
-                            std::cout << "status 200 not send: " << node.clientSocket.result << std::endl;
-                            nodeIter = nodes.erase(nodeIter);
-                            continue;
+                            ++iter->second;
                         }
-
-                        node.httpConnect = true;
 
                         addrinfo hint{};
                         hint.ai_family = static_cast<int>(may::AddressFamily::IPV4);
@@ -468,9 +448,26 @@ int main()
                                 }
                             }
 
-                            if (!node.tcpConnect)
+                            if (node.tcpConnect)
+                            {
+                                node.clientSocket.Send(status200.data(), status200.size());
+                                if (node.clientSocket.result != static_cast<int>(status200.size()))
+                                {
+                                    std::cout << "status 200 not send, error: " << node.clientSocket.error << std::endl;
+                                    nodeIter = nodes.erase(nodeIter);
+                                    continue;
+                                }
+
+                                node.httpConnect = true;
+                            }
+                            else
                             {
                                 std::cout << "host connect is fail, error: " << node.hostSocket.error << std::endl;
+
+                                node.clientSocket.Send(status502.data(), status502.size());
+                                if (node.clientSocket.result != static_cast<int>(status502.size()))
+                                    std::cout << "status 502 not send, error: " << node.clientSocket.error << std::endl;
+
                                 nodeIter = nodes.erase(nodeIter);
                                 continue;
                             }
@@ -478,6 +475,11 @@ int main()
                         else
                         {
                             std::cout << host << " - address not found, error: " << result << std::endl;
+
+                            node.clientSocket.Send(status502.data(), status502.size());
+                            if (node.clientSocket.result != static_cast<int>(status502.size()))
+                                std::cout << "status 502 not send, error: " << node.clientSocket.error << std::endl;
+
                             nodeIter = nodes.erase(nodeIter);
                             continue;
                         }
@@ -496,8 +498,8 @@ int main()
                             std::string domianName{ bufferStr.substr(pos1, pos2 - pos1) };
 
                             auto ipAddress = node.clientAddress.GetIP();
-                            auto iter = allowedIp.find(static_cast<std::string>(ipAddress));
-                            if (iter == allowedIp.end())
+                            auto iter = Node::allowedIP.find(static_cast<std::string>(ipAddress));
+                            if (iter == Node::allowedIP.end())
                             {
                                 if (domianName != "mathprofi.ru")
                                 {
@@ -507,25 +509,12 @@ int main()
                                 }
                                 else
                                 {
-                                    allowedIp.emplace(ipAddress);
-
-                                    IPfile.open("ip.txt", std::ios::in | std::ios::out | std::ios::binary);
-                                    IPfile.seekp(0, std::ios::end);
-                                    if (node.clientAddress.address.ss_family == static_cast<uint16_t>(may::AddressFamily::IPV4))
-                                    {
-                                        uint8_t size = 4;
-                                        IPfile.write(reinterpret_cast<const char*>(&size), sizeof(uint8_t));
-                                        IPfile.write(reinterpret_cast<const char*>(ipAddress.data()), size);
-                                    }
-                                    else if (node.clientAddress.address.ss_family == static_cast<uint16_t>(may::AddressFamily::IPV6))
-                                    {
-                                        uint8_t size = 16;
-                                        IPfile.write(reinterpret_cast<const char*>(&size), sizeof(uint8_t));
-                                        IPfile.write(reinterpret_cast<const char*>(ipAddress.data()), size);
-                                    }
-
-                                    IPfile.close();
+                                    Node::allowedIP.emplace(ipAddress, 1);
                                 }
+                            }
+                            else
+                            {
+                                ++iter->second;
                             }
                             
                             addrinfo hint{};
