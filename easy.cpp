@@ -34,19 +34,23 @@ struct Node
         if (hostSocket.error != 0)
             std::cout << hostSocket.errorStr;
 
-        auto iter = Node::allowedIP.find(static_cast<std::string>(clientAddress.GetIP()));
-        if (iter != Node::allowedIP.end())
+        if (authorization)
         {
-            --iter->second;
-            if (iter->second == 0)
-                Node::allowedIP.erase(iter);
+            auto iter = Node::allowedIP.find(static_cast<std::string>(clientAddress.GetIP()));
+            if (iter != Node::allowedIP.end())
+            {
+                --iter->second.first;
+                if (iter->second.first == 0)
+                    iter->second.second = std::chrono::steady_clock::now();
+            }
         }
     }
 
-    static inline std::map<std::string, uint32_t> allowedIP;
+    static inline std::map<std::string, std::pair<uint32_t, std::chrono::steady_clock::time_point>> allowedIP;
 
     bool httpConnect{ false };
     bool tcpConnect{ false };
+    bool authorization{ false };
 
     may::SocketAddress clientAddress;
 
@@ -197,6 +201,7 @@ int main()
     may::SocketAddress temporatyAddressIPv6(may::AddressFamily::IPV6);
     may::TCPSocket temporarySocketIPv6;*/
 
+    std::chrono::steady_clock::time_point timePoint = std::chrono::steady_clock::now();
     std::chrono::milliseconds connectTimeout = std::chrono::milliseconds{ std::stoll(connectTimeoutStr) };
     std::chrono::milliseconds requestTimeout = std::chrono::milliseconds{ std::stoll(requestTimeoutStr) };
     std::chrono::milliseconds disconnectTimeout = std::chrono::milliseconds{ std::stoll(disconnectTimeoutStr) };
@@ -236,13 +241,25 @@ int main()
                 }
             }*/
 
+            if (!Node::allowedIP.empty())
+            {
+                timePoint = std::chrono::steady_clock::now();
+                for (auto iter = Node::allowedIP.begin(); iter != Node::allowedIP.end();)
+                {
+                    if (iter->second.first == 0 && (timePoint - iter->second.second > std::chrono::minutes(30)))
+                        iter = Node::allowedIP.erase(iter);
+                    else
+                        ++iter;
+                }
+            }
+
             if (nodes.empty())
                 std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
             for (auto nodeIter = nodes.begin(); nodeIter != nodes.end();)
             {
                 Node& node = *nodeIter;
-                std::chrono::steady_clock::time_point timePoint = std::chrono::steady_clock::now();
+                timePoint = std::chrono::steady_clock::now();
 
                 if (timePoint - node.timeout.connect < connectTimeout)
                 {
@@ -406,12 +423,14 @@ int main()
                             }
                             else
                             {
-                                Node::allowedIP.emplace(ipAddress, 1);
+                                node.authorization = true;
+                                Node::allowedIP.emplace(ipAddress, std::pair{ 1, std::chrono::steady_clock::now() });
                             }
                         }
                         else
                         {
-                            ++iter->second;
+                            node.authorization = true;
+                            ++iter->second.first;
                         }
 
                         addrinfo hint{};
@@ -509,12 +528,14 @@ int main()
                                 }
                                 else
                                 {
-                                    Node::allowedIP.emplace(ipAddress, 1);
+                                    node.authorization = true;
+                                    Node::allowedIP.emplace(ipAddress, std::pair{ 1, std::chrono::steady_clock::now() });
                                 }
                             }
                             else
                             {
-                                ++iter->second;
+                                node.authorization = true;
+                                ++iter->second.first;
                             }
                             
                             addrinfo hint{};
