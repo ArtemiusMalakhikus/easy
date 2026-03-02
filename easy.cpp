@@ -24,8 +24,26 @@ std::string_view status502{ "HTTP/1.1 502 Bad Gateway\r\n\r\n" };
 
 struct Node
 {
+    Node()
+        : clientBuffer(8192), hostBuffer(8192)
+    {
+
+    }
+
     ~Node()
     {
+        Cleanup();
+    }
+
+    void Cleanup()
+    {
+        httpConnect = false;
+        tcpConnect = false;
+
+        clientBufferSize = 0;
+        hostBufferSize = 0;
+        index = -1;
+
         clientSocket.Close();
         if (clientSocket.error != 0)
             std::cout << clientSocket.errorStr;
@@ -36,6 +54,7 @@ struct Node
 
         if (authorization)
         {
+            authorization = false;
             auto iter = Node::allowedIP.find(static_cast<std::string>(clientAddress.GetIP()));
             if (iter != Node::allowedIP.end())
             {
@@ -52,18 +71,21 @@ struct Node
     bool tcpConnect{ false };
     bool authorization{ false };
 
+    uint32_t index{ static_cast<uint32_t>(-1)};
+
     may::SocketAddress clientAddress;
 
     may::TCPSocket clientSocket;
+    uint32_t clientBufferSize{ 0 };
     std::vector<uint8_t> clientBuffer;
 
     may::TCPSocket hostSocket;
+    uint32_t hostBufferSize{ 0 };
     std::vector<uint8_t> hostBuffer;
 
     struct Timeout
     {
         std::chrono::steady_clock::time_point connect;
-        std::chrono::steady_clock::time_point request;
     } timeout;
 };
 
@@ -80,7 +102,11 @@ void Out(int first)
 int main()
 {
     std::vector<uint8_t> buffer(8192);
-    std::list<Node> nodes;
+    std::vector<Node> nodes(128);
+
+    std::list<size_t> freeIndex;
+    for (size_t i = 0; i < nodes.size(); ++i)
+        freeIndex.push_back(i);
 
 #if defined UNIX
     signal(SIGINT, Out);
@@ -98,12 +124,8 @@ int main()
 
     std::string addressStr;           //адрес в формате 00.00.00.00:0000
     std::string connectTimeoutStr;    //таймаут на подключение по TCP в миллисекундах
-    std::string requestTimeoutStr;    //таймаут на приём и передачу данных в миллисекундах
-    std::string disconnectTimeoutStr; //таймаут для отключения узла при простое в миллисекундах
     file >> addressStr;
     file >> connectTimeoutStr;
-    file >> requestTimeoutStr;
-    file >> disconnectTimeoutStr;
     file.close();
 
     /*std::fstream IPfile("ip.txt", std::ios::in | std::ios::binary);
@@ -203,8 +225,6 @@ int main()
 
     std::chrono::steady_clock::time_point timePoint = std::chrono::steady_clock::now();
     std::chrono::milliseconds connectTimeout = std::chrono::milliseconds{ std::stoll(connectTimeoutStr) };
-    std::chrono::milliseconds requestTimeout = std::chrono::milliseconds{ std::stoll(requestTimeoutStr) };
-    std::chrono::milliseconds disconnectTimeout = std::chrono::milliseconds{ std::stoll(disconnectTimeoutStr) };
 
     std::cout << "easy is running\n";
 
@@ -215,15 +235,22 @@ int main()
             temporarySocket.socketID = listeningTcpSocket.Accept(temporatyAddress);
             if (temporarySocket.socketID != -1)
             {
-                Node& node = nodes.emplace_back();
-                node.timeout.request = std::chrono::steady_clock::now();
-                node.clientAddress = temporatyAddress;
-                node.clientSocket.socketID = temporarySocket.socketID;
-                node.clientSocket.SetNonBlockingMode();
-                if (node.clientSocket.error != 0)
+                //Node& node = nodes.emplace_back();
+
+                if (!freeIndex.empty())
                 {
-                    std::cout << node.clientSocket.errorStr;
-                    return 1;
+                    Node& node = nodes[freeIndex.front()];
+                    node.index = freeIndex.front();
+                    freeIndex.pop_front();
+
+                    node.clientAddress = temporatyAddress;
+                    node.clientSocket.socketID = temporarySocket.socketID;
+                    node.clientSocket.SetNonBlockingMode();
+                    if (node.clientSocket.error != 0)
+                    {
+                        std::cout << node.clientSocket.errorStr;
+                        return 1;
+                    }
                 }
             }
 
@@ -253,103 +280,99 @@ int main()
                 }
             }
 
-            if (nodes.empty())
-                std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+            //if (nodes.empty())
+                //std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
-            for (auto nodeIter = nodes.begin(); nodeIter != nodes.end();)
+            for (auto& node : nodes)
             {
-                Node& node = *nodeIter;
-                timePoint = std::chrono::steady_clock::now();
-
-                if (timePoint - node.timeout.connect < connectTimeout)
-                {
-                    ++nodeIter;
+                if (node.index == -1)
                     continue;
-                }
 
-                if (timePoint - node.timeout.request < requestTimeout)
-                {
-                    ++nodeIter;
+                if (std::chrono::steady_clock::now() - node.timeout.connect < connectTimeout)
                     continue;
-                }
 
-                if (!node.clientBuffer.empty())
+                if (node.clientBufferSize)
                 {
-                    node.clientSocket.Send(reinterpret_cast<const char*>(node.clientBuffer.data()), node.clientBuffer.size());
-                    if (node.clientSocket.result < static_cast<int>(node.clientBuffer.size()))
+                    node.clientSocket.Send(reinterpret_cast<const char*>(node.clientBuffer.data()), node.clientBufferSize);
+                    if (node.clientSocket.result < static_cast<int>(node.clientBufferSize))
                     {
                         size_t index = 0;
                         size_t size = 0;
                         if (node.clientSocket.error == SOCKET_WOULDBLOCK)
                         {
-                            size = node.clientBuffer.size();
+                            size = node.clientBufferSize;
                         }
                         else if (node.clientSocket.error == 0)
                         {
                             index = node.clientSocket.result;
-                            size = node.clientBuffer.size() - node.clientSocket.result;
+                            size = node.clientBufferSize - node.clientSocket.result;
                         }
                         else
                         {
                             std::cout << "client send error: " << node.clientSocket.error
                                 << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
                                 << ". socket of counter: " << nodes.size() - 1 << std::endl;
-                            nodeIter = nodes.erase(nodeIter);
+
+                            freeIndex.push_back(node.index);
+                            node.Cleanup();
+                            //nodeIter = nodes.erase(nodeIter);
                             continue;
                         }
 
-                        memcpy(buffer.data(), node.clientBuffer.data(), node.clientBuffer.size());
+                        memcpy(buffer.data(), node.clientBuffer.data(), node.clientBufferSize);
 
-                        node.clientBuffer.resize(size);
-                        memcpy(node.clientBuffer.data(), &buffer[index], node.clientBuffer.size());
+                        node.clientBufferSize = size;
+                        memcpy(node.clientBuffer.data(), &buffer[index], node.clientBufferSize);
                     }
                     else
                     {
-                        node.clientBuffer.clear();
+                        node.clientBufferSize = 0;
                     }
 
                     //node.timeout.request = std::chrono::steady_clock::now();
-                    ++nodeIter;
+                    //++nodeIter;
                     continue;
                 }
 
-                if (!node.hostBuffer.empty())
+                if (node.hostBufferSize)
                 {
-                    node.hostSocket.Send(reinterpret_cast<const char*>(node.hostBuffer.data()), node.hostBuffer.size());
-                    if (node.hostSocket.result < static_cast<int>(node.hostBuffer.size()))
+                    node.hostSocket.Send(reinterpret_cast<const char*>(node.hostBuffer.data()), node.hostBufferSize);
+                    if (node.hostSocket.result < static_cast<int>(node.hostBufferSize))
                     {
                         size_t index = 0;
                         size_t size = 0;
                         if (node.hostSocket.error == SOCKET_WOULDBLOCK)
                         {
-                            size = node.hostBuffer.size();
+                            size = node.hostBufferSize;
                         }
                         else if (node.hostSocket.error == 0)
                         {
                             index = node.hostSocket.result;
-                            size = node.hostBuffer.size() - node.hostSocket.result;
+                            size = node.hostBufferSize - node.hostSocket.result;
                         }
                         else
                         {
                             std::cout << "host send error: " << node.hostSocket.error
                                 << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
                                 << ". socket of counter: " << nodes.size() - 1 << std::endl;
-                            nodeIter = nodes.erase(nodeIter);
+
+                            freeIndex.push_back(node.index);
+                            node.Cleanup();
+                            //nodeIter = nodes.erase(nodeIter);
                             continue;
                         }
 
-                        memcpy(buffer.data(), node.hostBuffer.data(), node.hostBuffer.size());
+                        memcpy(buffer.data(), node.hostBuffer.data(), node.hostBufferSize);
 
-                        node.hostBuffer.resize(size);
-                        memcpy(node.hostBuffer.data(), &buffer[index], node.hostBuffer.size());
+                        node.hostBufferSize = size;
+                        memcpy(node.hostBuffer.data(), &buffer[index], node.hostBufferSize);
                     }
                     else
                     {
-                        node.hostBuffer.clear();
+                        node.hostBufferSize = 0;
                     }
 
-                    node.timeout.request = std::chrono::steady_clock::now();
-                    ++nodeIter;
+                    //++nodeIter;
                     continue;
                 }
 
@@ -377,16 +400,18 @@ int main()
                                 std::cout << "host send error: " << node.hostSocket.error
                                     << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
                                     << ". socket of counter: " << nodes.size() - 1 << std::endl;
-                                nodeIter = nodes.erase(nodeIter);
+
+                                freeIndex.push_back(node.index);
+                                node.Cleanup();
+                                //nodeIter = nodes.erase(nodeIter);
                                 continue;
                             }
 
-                            node.hostBuffer.resize(size);
-                            memcpy(node.hostBuffer.data(), &buffer[index], node.hostBuffer.size());
+                            node.hostBufferSize = size;
+                            memcpy(node.hostBuffer.data(), &buffer[index], node.hostBufferSize);
                         }
 
-                        node.timeout.request = std::chrono::steady_clock::now();
-                        ++nodeIter;
+                        //++nodeIter;
                         continue;
                     }
                     else if (memcmp(buffer.data(), httpsConnectStr.data(), httpsConnectStr.size()) == 0)
@@ -418,7 +443,9 @@ int main()
                             if (domianName != "mathprofi.ru")
                             {
                                 std::cout << "unknown ip address" << std::endl;
-                                nodeIter = nodes.erase(nodeIter);
+                                freeIndex.push_back(node.index);
+                                node.Cleanup();
+                                //nodeIter = nodes.erase(nodeIter);
                                 continue;
                             }
                             else
@@ -473,7 +500,9 @@ int main()
                                 if (node.clientSocket.result != static_cast<int>(status200.size()))
                                 {
                                     std::cout << "status 200 not send, error: " << node.clientSocket.error << std::endl;
-                                    nodeIter = nodes.erase(nodeIter);
+                                    freeIndex.push_back(node.index);
+                                    node.Cleanup();
+                                    //nodeIter = nodes.erase(nodeIter);
                                     continue;
                                 }
 
@@ -487,7 +516,9 @@ int main()
                                 if (node.clientSocket.result != static_cast<int>(status502.size()))
                                     std::cout << "status 502 not send, error: " << node.clientSocket.error << std::endl;
 
-                                nodeIter = nodes.erase(nodeIter);
+                                freeIndex.push_back(node.index);
+                                node.Cleanup();
+                                //nodeIter = nodes.erase(nodeIter);
                                 continue;
                             }
                         }
@@ -499,11 +530,13 @@ int main()
                             if (node.clientSocket.result != static_cast<int>(status502.size()))
                                 std::cout << "status 502 not send, error: " << node.clientSocket.error << std::endl;
 
-                            nodeIter = nodes.erase(nodeIter);
+                            freeIndex.push_back(node.index);
+                            node.Cleanup();
+                            //nodeIter = nodes.erase(nodeIter);
                             continue;
                         }
 
-                        ++nodeIter;
+                        //++nodeIter;
                         continue;
                     }
                     else if (memcmp(buffer.data(), httpConnectStr.data(), httpConnectStr.size()) == 0)
@@ -523,7 +556,9 @@ int main()
                                 if (domianName != "mathprofi.ru")
                                 {
                                     std::cout << "unknown ip address" << std::endl;
-                                    nodeIter = nodes.erase(nodeIter);
+                                    freeIndex.push_back(node.index);
+                                    node.Cleanup();
+                                    //nodeIter = nodes.erase(nodeIter);
                                     continue;
                                 }
                                 else
@@ -575,49 +610,22 @@ int main()
                                 if (!node.tcpConnect)
                                 {
                                     std::cout << "host connect is fail, error: " << node.hostSocket.error << std::endl;
-                                    nodeIter = nodes.erase(nodeIter);
+                                    freeIndex.push_back(node.index);
+                                    node.Cleanup();
+                                    //nodeIter = nodes.erase(nodeIter);
                                     continue;
                                 }
 
                                 node.httpConnect = true;
-                                node.hostBuffer.resize(bufferStr.size());
-                                memcpy(node.hostBuffer.data(), bufferStr.data(), bufferStr.size());
-
-                                ///*
-                                //* Копирование в буфер отправки на хост всех заголовков, кроме заголовка Proxy-Connection,
-                                //* а также изменение запроса GET на корректный (без http://домен)
-                                //*/
-
-                                //std::vector<std::string> headers;
-                                //auto pos = bufferStr.find_first_of(domianName);
-                                //pos += domianName.size();
-                                //std::string endHeader{ bufferStr.substr(pos, bufferStr.find_first_of("\r\n") + 2 - pos) };
-                                //headers.push_back("GET " + endHeader);
-                                //size_t headersSize = headers[0].size();
-
-                                //for (pos = bufferStr.find_first_of("\r\n"); pos != -1; pos = bufferStr.find_first_of("\r\n", pos))
-                                //{
-                                //    pos += 2;
-                                //    std::string header{ bufferStr.substr(pos, bufferStr.find_first_of("\r\n", pos) + 2 - pos) };
-                                //    if (!header.empty() && header.find("Proxy-Connection") == -1)
-                                //    {
-                                //        headers.push_back(header);
-                                //        headersSize += header.size();
-                                //    }
-                                //}
-
-                                //node.hostBuffer.resize(headersSize);
-                                //uint8_t* hostBufferPtr = node.hostBuffer.data();
-                                //for (auto& header : headers)
-                                //{
-                                //    memcpy(hostBufferPtr, header.data(), header.size());
-                                //    hostBufferPtr += header.size();
-                                //}
+                                node.hostBufferSize = bufferStr.size();
+                                memcpy(node.hostBuffer.data(), bufferStr.data(), node.hostBufferSize);
                             }
                             else
                             {
                                 std::cout << domianName << " - address not found, error: " << result << std::endl;
-                                nodeIter = nodes.erase(nodeIter);
+                                freeIndex.push_back(node.index);
+                                node.Cleanup();
+                                //nodeIter = nodes.erase(nodeIter);
                                 continue;
                             }
                         }
@@ -627,11 +635,13 @@ int main()
                                 std::cout << buffer[i];
 
                             std::cout << "unknown format" << std::endl;
-                            nodeIter = nodes.erase(nodeIter);
+                            freeIndex.push_back(node.index);
+                            node.Cleanup();
+                            //nodeIter = nodes.erase(nodeIter);
                             continue;
                         }
 
-                        ++nodeIter;
+                        //++nodeIter;
                         continue;
                     }
                     else
@@ -640,7 +650,9 @@ int main()
                             std::cout << buffer[i];
 
                         std::cout << "unknown format" << std::endl;
-                        nodeIter = nodes.erase(nodeIter);
+                        freeIndex.push_back(node.index);
+                        node.Cleanup();
+                        //nodeIter = nodes.erase(nodeIter);
                         continue;
                     }
                 }
@@ -652,7 +664,10 @@ int main()
                             << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
                             << ". socket of counter: " << nodes.size() - 1 << std::endl;
                     }
-                    nodeIter = nodes.erase(nodeIter);
+                    
+                    freeIndex.push_back(node.index);
+                    node.Cleanup();
+                    //nodeIter = nodes.erase(nodeIter);
                     continue;
                 }
 
@@ -680,12 +695,14 @@ int main()
                                 std::cout << "client send error: " << node.clientSocket.error
                                     << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
                                     << ". socket of counter: " << nodes.size() - 1 << std::endl;
-                                nodeIter = nodes.erase(nodeIter);
+                                freeIndex.push_back(node.index);
+                                node.Cleanup();
+                                //nodeIter = nodes.erase(nodeIter);
                                 continue;
                             }
 
-                            node.clientBuffer.resize(size);
-                            memcpy(node.clientBuffer.data(), &buffer[index], node.clientBuffer.size());
+                            node.clientBufferSize = size;
+                            memcpy(node.clientBuffer.data(), &buffer[index], node.clientBufferSize);
                         }
                     }
                     else if (node.hostSocket.result == 0 || node.hostSocket.error != SOCKET_WOULDBLOCK)
@@ -696,16 +713,17 @@ int main()
                                 << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
                                 << ". socket of counter: " << nodes.size() - 1 << std::endl;
                         }
-                        nodeIter = nodes.erase(nodeIter);
+                        freeIndex.push_back(node.index);
+                        node.Cleanup();
+                        //nodeIter = nodes.erase(nodeIter);
                         continue;
                     }
 
-                    node.timeout.request = std::chrono::steady_clock::now();
-                    ++nodeIter;
+                    //++nodeIter;
                     continue;
                 }
 
-                ++nodeIter;
+                //++nodeIter;
             }
         }
     }
