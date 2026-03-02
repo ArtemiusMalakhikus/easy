@@ -63,7 +63,6 @@ struct Node
     struct Timeout
     {
         std::chrono::steady_clock::time_point connect;
-        std::chrono::steady_clock::time_point request;
     } timeout;
 };
 
@@ -98,12 +97,8 @@ int main()
 
     std::string addressStr;           //адрес в формате 00.00.00.00:0000
     std::string connectTimeoutStr;    //таймаут на подключение по TCP в миллисекундах
-    std::string requestTimeoutStr;    //таймаут на приём и передачу данных в миллисекундах
-    std::string disconnectTimeoutStr; //таймаут для отключения узла при простое в миллисекундах
     file >> addressStr;
     file >> connectTimeoutStr;
-    file >> requestTimeoutStr;
-    file >> disconnectTimeoutStr;
     file.close();
 
     /*std::fstream IPfile("ip.txt", std::ios::in | std::ios::binary);
@@ -203,8 +198,6 @@ int main()
 
     std::chrono::steady_clock::time_point timePoint = std::chrono::steady_clock::now();
     std::chrono::milliseconds connectTimeout = std::chrono::milliseconds{ std::stoll(connectTimeoutStr) };
-    std::chrono::milliseconds requestTimeout = std::chrono::milliseconds{ std::stoll(requestTimeoutStr) };
-    std::chrono::milliseconds disconnectTimeout = std::chrono::milliseconds{ std::stoll(disconnectTimeoutStr) };
 
     std::cout << "easy is running\n";
 
@@ -216,7 +209,6 @@ int main()
             if (temporarySocket.socketID != -1)
             {
                 Node& node = nodes.emplace_back();
-                node.timeout.request = std::chrono::steady_clock::now();
                 node.clientAddress = temporatyAddress;
                 node.clientSocket.socketID = temporarySocket.socketID;
                 node.clientSocket.SetNonBlockingMode();
@@ -259,15 +251,8 @@ int main()
             for (auto nodeIter = nodes.begin(); nodeIter != nodes.end();)
             {
                 Node& node = *nodeIter;
-                timePoint = std::chrono::steady_clock::now();
 
-                if (timePoint - node.timeout.connect < connectTimeout)
-                {
-                    ++nodeIter;
-                    continue;
-                }
-
-                if (timePoint - node.timeout.request < requestTimeout)
+                if (std::chrono::steady_clock::now() - node.timeout.connect < connectTimeout)
                 {
                     ++nodeIter;
                     continue;
@@ -308,7 +293,6 @@ int main()
                         node.clientBuffer.clear();
                     }
 
-                    //node.timeout.request = std::chrono::steady_clock::now();
                     ++nodeIter;
                     continue;
                 }
@@ -348,7 +332,6 @@ int main()
                         node.hostBuffer.clear();
                     }
 
-                    node.timeout.request = std::chrono::steady_clock::now();
                     ++nodeIter;
                     continue;
                 }
@@ -385,7 +368,6 @@ int main()
                             memcpy(node.hostBuffer.data(), &buffer[index], node.hostBuffer.size());
                         }
 
-                        node.timeout.request = std::chrono::steady_clock::now();
                         ++nodeIter;
                         continue;
                     }
@@ -700,7 +682,6 @@ int main()
                         continue;
                     }
 
-                    node.timeout.request = std::chrono::steady_clock::now();
                     ++nodeIter;
                     continue;
                 }
