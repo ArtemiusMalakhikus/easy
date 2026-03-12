@@ -11,6 +11,7 @@
 #include <set>
 
 #define HOST_NAME_DEBUG 
+#define SOCKET_ERROR_DEBUG
 
 #define WINDOWS
 #define TCP_SOCKET
@@ -244,9 +245,10 @@ int main()
                         ++iter;
                 }
             }
-
-            if (nodes.empty())
+            else
+            {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+            }
 
             for (auto nodeIter = nodes.begin(); nodeIter != nodes.end();)
             {
@@ -276,9 +278,12 @@ int main()
                         }
                         else
                         {
+#ifdef SOCKET_ERROR_DEBUG
                             std::cout << "client send error: " << node.clientSocket.error
                                 << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
                                 << ". socket of counter: " << nodes.size() - 1 << std::endl;
+#endif // SOCKET_ERROR_DEBUG
+                        
                             nodeIter = nodes.erase(nodeIter);
                             continue;
                         }
@@ -315,9 +320,12 @@ int main()
                         }
                         else
                         {
+#ifdef SOCKET_ERROR_DEBUG
                             std::cout << "host send error: " << node.hostSocket.error
                                 << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
                                 << ". socket of counter: " << nodes.size() - 1 << std::endl;
+#endif // SOCKET_ERROR_DEBUG
+                         
                             nodeIter = nodes.erase(nodeIter);
                             continue;
                         }
@@ -357,9 +365,12 @@ int main()
                             }
                             else
                             {
+#ifdef SOCKET_ERROR_DEBUG
                                 std::cout << "host send error: " << node.hostSocket.error
                                     << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
                                     << ". socket of counter: " << nodes.size() - 1 << std::endl;
+#endif // SOCKET_ERROR_DEBUG
+                                
                                 nodeIter = nodes.erase(nodeIter);
                                 continue;
                             }
@@ -399,7 +410,7 @@ int main()
                         {
                             if (domianName != "mathprofi.ru")
                             {
-                                std::cout << "unknown ip address" << std::endl;
+                                //std::cout << "unknown ip address" << std::endl;
                                 nodeIter = nodes.erase(nodeIter);
                                 continue;
                             }
@@ -504,7 +515,7 @@ int main()
                             {
                                 if (domianName != "mathprofi.ru")
                                 {
-                                    std::cout << "unknown ip address" << std::endl;
+                                    //std::cout << "unknown ip address" << std::endl;
                                     nodeIter = nodes.erase(nodeIter);
                                     continue;
                                 }
@@ -630,9 +641,11 @@ int main()
                 {
                     if (node.clientSocket.error != 0 && node.clientSocket.error != SOCKET_WOULDBLOCK)
                     {
+#ifdef SOCKET_ERROR_DEBUG
                         std::cout << "client receive error: " << node.clientSocket.error
                             << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
                             << ". socket of counter: " << nodes.size() - 1 << std::endl;
+#endif // SOCKET_ERROR_DEBUG
                     }
                     nodeIter = nodes.erase(nodeIter);
                     continue;
@@ -659,9 +672,12 @@ int main()
                             }
                             else
                             {
+#ifdef SOCKET_ERROR_DEBUG
                                 std::cout << "client send error: " << node.clientSocket.error
                                     << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
                                     << ". socket of counter: " << nodes.size() - 1 << std::endl;
+#endif // SOCKET_ERROR_DEBUG
+
                                 nodeIter = nodes.erase(nodeIter);
                                 continue;
                             }
@@ -674,9 +690,12 @@ int main()
                     {
                         if (node.hostSocket.error != 0 && node.hostSocket.error != SOCKET_WOULDBLOCK)
                         {
+#ifdef SOCKET_ERROR_DEBUG
                             std::cout << "host receive error: " << node.hostSocket.error
                                 << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
                                 << ". socket of counter: " << nodes.size() - 1 << std::endl;
+#endif // SOCKET_ERROR_DEBUG
+
                         }
                         nodeIter = nodes.erase(nodeIter);
                         continue;
