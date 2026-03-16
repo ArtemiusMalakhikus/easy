@@ -10,7 +10,7 @@
 #include <map>
 #include <set>
 
-#define HOST_NAME_DEBUG 
+//#define HOST_NAME_DEBUG 
 #define SOCKET_ERROR_DEBUG
 
 #define WINDOWS
@@ -260,92 +260,8 @@ int main()
                     continue;
                 }
 
-                if (!node.clientBuffer.empty())
-                {
-                    node.clientSocket.Send(reinterpret_cast<const char*>(node.clientBuffer.data()), node.clientBuffer.size());
-                    if (node.clientSocket.result < static_cast<int>(node.clientBuffer.size()))
-                    {
-                        size_t index = 0;
-                        size_t size = 0;
-                        if (node.clientSocket.error == SOCKET_WOULDBLOCK)
-                        {
-                            size = node.clientBuffer.size();
-                        }
-                        else if (node.clientSocket.error == 0)
-                        {
-                            index = node.clientSocket.result;
-                            size = node.clientBuffer.size() - node.clientSocket.result;
-                        }
-                        else
-                        {
-#ifdef SOCKET_ERROR_DEBUG
-                            std::cout << "client send error: " << node.clientSocket.error
-                                << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
-                                << ". socket of counter: " << nodes.size() - 1 << std::endl;
-#endif // SOCKET_ERROR_DEBUG
-                        
-                            nodeIter = nodes.erase(nodeIter);
-                            continue;
-                        }
-
-                        memcpy(buffer.data(), node.clientBuffer.data(), node.clientBuffer.size());
-
-                        node.clientBuffer.resize(size);
-                        memcpy(node.clientBuffer.data(), &buffer[index], node.clientBuffer.size());
-                    }
-                    else
-                    {
-                        node.clientBuffer.clear();
-                    }
-
-                    ++nodeIter;
-                    continue;
-                }
-
-                if (!node.hostBuffer.empty())
-                {
-                    node.hostSocket.Send(reinterpret_cast<const char*>(node.hostBuffer.data()), node.hostBuffer.size());
-                    if (node.hostSocket.result < static_cast<int>(node.hostBuffer.size()))
-                    {
-                        size_t index = 0;
-                        size_t size = 0;
-                        if (node.hostSocket.error == SOCKET_WOULDBLOCK)
-                        {
-                            size = node.hostBuffer.size();
-                        }
-                        else if (node.hostSocket.error == 0)
-                        {
-                            index = node.hostSocket.result;
-                            size = node.hostBuffer.size() - node.hostSocket.result;
-                        }
-                        else
-                        {
-#ifdef SOCKET_ERROR_DEBUG
-                            std::cout << "host send error: " << node.hostSocket.error
-                                << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
-                                << ". socket of counter: " << nodes.size() - 1 << std::endl;
-#endif // SOCKET_ERROR_DEBUG
-                         
-                            nodeIter = nodes.erase(nodeIter);
-                            continue;
-                        }
-
-                        memcpy(buffer.data(), node.hostBuffer.data(), node.hostBuffer.size());
-
-                        node.hostBuffer.resize(size);
-                        memcpy(node.hostBuffer.data(), &buffer[index], node.hostBuffer.size());
-                    }
-                    else
-                    {
-                        node.hostBuffer.clear();
-                    }
-
-                    ++nodeIter;
-                    continue;
-                }
-
-                node.clientSocket.Receive(reinterpret_cast<char*>(buffer.data()), buffer.size());
-                if (node.clientSocket.result > 0)
+                node.clientSocket.Receive(reinterpret_cast<char*>(buffer.data()), buffer.size());           
+                if (node.clientSocket.result > 0 && node.hostBuffer.empty())
                 {
                     if (node.httpConnect && node.tcpConnect)
                     {
@@ -375,12 +291,9 @@ int main()
                                 continue;
                             }
 
-                            node.hostBuffer.resize(size);
-                            memcpy(node.hostBuffer.data(), &buffer[index], node.hostBuffer.size());
+					        node.hostBuffer.resize(size);
+					        memcpy(node.hostBuffer.data(), &buffer[index], size);
                         }
-
-                        ++nodeIter;
-                        continue;
                     }
                     else if (memcmp(buffer.data(), httpsConnectStr.data(), httpsConnectStr.size()) == 0)
                     {
@@ -650,11 +563,55 @@ int main()
                     nodeIter = nodes.erase(nodeIter);
                     continue;
                 }
+                else if (!node.hostBuffer.empty())
+                {
+                    if (node.clientSocket.result > 0)
+                    {
+                        uint32_t ind = node.hostBuffer.size();
+                        node.hostBuffer.resize(node.hostBuffer.size() + node.clientSocket.result);
+                        memcpy(&node.hostBuffer[ind], buffer.data(), node.clientSocket.result);
+                    }
+
+                    node.hostSocket.Send(reinterpret_cast<const char*>(node.hostBuffer.data()), node.hostBuffer.size());
+                    if (node.hostSocket.result < static_cast<int>(node.hostBuffer.size()))
+                    {
+                        size_t index = 0;
+                        size_t size = 0;
+                        if (node.hostSocket.error == SOCKET_WOULDBLOCK)
+                        {
+                            size = node.hostBuffer.size();
+                        }
+                        else if (node.hostSocket.error == 0)
+                        {
+                            index = node.hostSocket.result;
+                            size = node.hostBuffer.size() - node.hostSocket.result;
+                        }
+                        else
+                        {
+#ifdef SOCKET_ERROR_DEBUG
+                            std::cout << "host send error: " << node.hostSocket.error
+                                << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
+                                << ". socket of counter: " << nodes.size() - 1 << std::endl;
+#endif // SOCKET_ERROR_DEBUG
+
+                            nodeIter = nodes.erase(nodeIter);
+                            continue;
+                        }
+
+                        std::vector<uint8_t> staging(size);
+                        memcpy(staging.data(), &node.hostBuffer[index], size);
+                        node.hostBuffer = std::move(staging);
+                    }
+                    else
+                    {
+                        node.hostBuffer.clear();
+                    }
+                }
 
                 if (node.tcpConnect)
                 {
                     node.hostSocket.Receive(reinterpret_cast<char*>(buffer.data()), buffer.size());
-                    if (node.hostSocket.result > 0)
+                    if (node.hostSocket.result > 0 && node.clientBuffer.empty())
                     {
                         node.clientSocket.Send(reinterpret_cast<const char*>(buffer.data()), node.hostSocket.result);
                         if (node.clientSocket.result < node.hostSocket.result)
@@ -683,7 +640,7 @@ int main()
                             }
 
                             node.clientBuffer.resize(size);
-                            memcpy(node.clientBuffer.data(), &buffer[index], node.clientBuffer.size());
+                            memcpy(node.clientBuffer.data(), &buffer[index], size);
                         }
                     }
                     else if (node.hostSocket.result == 0 || node.hostSocket.error != SOCKET_WOULDBLOCK)
@@ -699,6 +656,50 @@ int main()
                         }
                         nodeIter = nodes.erase(nodeIter);
                         continue;
+                    }
+                    if (!node.clientBuffer.empty())
+                    {
+                        if (node.hostSocket.result > 0)
+                        {
+                            uint32_t ind = node.clientBuffer.size();
+                            node.clientBuffer.resize(node.clientBuffer.size() + node.hostSocket.result);
+                            memcpy(&node.clientBuffer[ind], buffer.data(), node.hostSocket.result);
+                        }
+
+                        node.clientSocket.Send(reinterpret_cast<const char*>(node.clientBuffer.data()), node.clientBuffer.size());
+                        if (node.clientSocket.result < static_cast<int>(node.clientBuffer.size()))
+                        {
+                            size_t index = 0;
+                            size_t size = 0;
+                            if (node.clientSocket.error == SOCKET_WOULDBLOCK)
+                            {
+                                size = node.clientBuffer.size();
+                            }
+                            else if (node.clientSocket.error == 0)
+                            {
+                                index = node.clientSocket.result;
+                                size = node.clientBuffer.size() - node.clientSocket.result;
+                            }
+                            else
+                            {
+#ifdef SOCKET_ERROR_DEBUG
+                                std::cout << "client send error: " << node.clientSocket.error
+                                    << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
+                                    << ". socket of counter: " << nodes.size() - 1 << std::endl;
+#endif // SOCKET_ERROR_DEBUG
+
+                                nodeIter = nodes.erase(nodeIter);
+                                continue;
+                            }
+
+                            std::vector<uint8_t> staging(size);
+                            memcpy(staging.data(), &node.clientBuffer[index], size);
+                            node.clientBuffer = std::move(staging);
+                        }
+                        else
+                        {
+                            node.clientBuffer.clear();
+                        }
                     }
 
                     ++nodeIter;
