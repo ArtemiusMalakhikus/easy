@@ -550,19 +550,6 @@ int main()
                         continue;
                     }
                 }
-                else if (node.clientSocket.result == 0 || node.clientSocket.error != SOCKET_WOULDBLOCK)
-                {
-                    if (node.clientSocket.error != 0 && node.clientSocket.error != SOCKET_WOULDBLOCK)
-                    {
-#ifdef SOCKET_ERROR_DEBUG
-                        std::cout << "client receive error: " << node.clientSocket.error
-                            << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
-                            << ". socket of counter: " << nodes.size() - 1 << std::endl;
-#endif // SOCKET_ERROR_DEBUG
-                    }
-                    nodeIter = nodes.erase(nodeIter);
-                    continue;
-                }
                 else if (!node.hostBuffer.empty())
                 {
                     if (node.clientSocket.result > 0)
@@ -607,6 +594,19 @@ int main()
                         node.hostBuffer.clear();
                     }
                 }
+                else if (node.clientSocket.result == 0 || node.clientSocket.error != SOCKET_WOULDBLOCK)
+                {
+                    if (node.clientSocket.error != 0 && node.clientSocket.error != SOCKET_WOULDBLOCK)
+                    {
+#ifdef SOCKET_ERROR_DEBUG
+                        std::cout << "client receive error: " << node.clientSocket.error
+                            << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
+                            << ". socket of counter: " << nodes.size() - 1 << std::endl;
+#endif // SOCKET_ERROR_DEBUG
+                    }
+                    nodeIter = nodes.erase(nodeIter);
+                    continue;
+                }
 
                 if (node.tcpConnect)
                 {
@@ -643,21 +643,7 @@ int main()
                             memcpy(node.clientBuffer.data(), &buffer[index], size);
                         }
                     }
-                    else if (node.hostSocket.result == 0 || node.hostSocket.error != SOCKET_WOULDBLOCK)
-                    {
-                        if (node.hostSocket.error != 0 && node.hostSocket.error != SOCKET_WOULDBLOCK)
-                        {
-#ifdef SOCKET_ERROR_DEBUG
-                            std::cout << "host receive error: " << node.hostSocket.error
-                                << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
-                                << ". socket of counter: " << nodes.size() - 1 << std::endl;
-#endif // SOCKET_ERROR_DEBUG
-
-                        }
-                        nodeIter = nodes.erase(nodeIter);
-                        continue;
-                    }
-                    if (!node.clientBuffer.empty())
+                    else if (!node.clientBuffer.empty())
                     {
                         if (node.hostSocket.result > 0)
                         {
@@ -700,6 +686,20 @@ int main()
                         {
                             node.clientBuffer.clear();
                         }
+                    }
+                    else if (node.hostSocket.result == 0 || node.hostSocket.error != SOCKET_WOULDBLOCK)
+                    {
+                        if (node.hostSocket.error != 0 && node.hostSocket.error != SOCKET_WOULDBLOCK)
+                        {
+#ifdef SOCKET_ERROR_DEBUG
+                            std::cout << "host receive error: " << node.hostSocket.error
+                                << ". close socket: " << node.clientSocket.socketID << ", " << node.hostSocket.socketID
+                                << ". socket of counter: " << nodes.size() - 1 << std::endl;
+#endif // SOCKET_ERROR_DEBUG
+
+                        }
+                        nodeIter = nodes.erase(nodeIter);
+                        continue;
                     }
 
                     ++nodeIter;
