@@ -155,7 +155,7 @@ int main()
         return 1;
     }
 
-    listeningTcpSocket.SetNonBlockingMode();
+    listeningTcpSocket.SetNonBlockingMode(true);
     if (listeningTcpSocket.error != 0)
     {
         std::cout << listeningTcpSocket.errorStr;
@@ -206,13 +206,15 @@ int main()
     {
         while (work)
         {
+            std::this_thread::sleep_for(std::chrono::microseconds(500));
+
             temporarySocket.socketID = listeningTcpSocket.Accept(temporatyAddress);
             if (temporarySocket.socketID != -1)
             {
                 Node& node = nodes.emplace_back();
                 node.clientAddress = temporatyAddress;
                 node.clientSocket.socketID = temporarySocket.socketID;
-                node.clientSocket.SetNonBlockingMode();
+                node.clientSocket.SetNonBlockingMode(true);
                 if (node.clientSocket.error != 0)
                 {
                     std::cout << node.clientSocket.errorStr;
@@ -244,10 +246,6 @@ int main()
                     else
                         ++iter;
                 }
-            }
-            else
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1000));
             }
 
             for (auto nodeIter = nodes.begin(); nodeIter != nodes.end();)
@@ -355,7 +353,7 @@ int main()
                                 return 1;
                             }
 
-                            node.hostSocket.SetNonBlockingMode();
+                            node.hostSocket.SetNonBlockingMode(true);
                             if (node.hostSocket.error != 0)
                             {
                                 std::cout << node.hostSocket.errorStr;
@@ -460,7 +458,7 @@ int main()
                                     return 1;
                                 }
 
-                                node.hostSocket.SetNonBlockingMode();
+                                node.hostSocket.SetNonBlockingMode(true);
                                 if (node.hostSocket.error != 0)
                                 {
                                     std::cout << node.hostSocket.errorStr;
